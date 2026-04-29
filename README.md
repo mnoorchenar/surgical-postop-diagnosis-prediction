@@ -78,26 +78,40 @@ sdk: docker
 
 ## 🏗️ Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│          Surgical Post-op Diagnosis Prediction                     │
-│                                                                    │
-│  ┌────────────┐    ┌─────────────────┐    ┌──────────────────┐  │
-│  │  Pre-op    │───▶│ Bio-ClinicalBERT│───▶│  Task A          │  │
-│  │  Features  │    │  (768-d)        │    │  ICD-10 Code     │  │
-│  └────────────┘    └────────┬────────┘    └──────────────────┘  │
-│                             │                                      │
-│                    ┌────────▼────────┐    ┌──────────────────┐   │
-│                    │  FAISS Index    │───▶│  Task B          │   │
-│                    │  (k=5 RAG)      │    │  Operative Dx    │   │
-│                    └────────┬────────┘    │  (Llama-3 + RAG) │   │
-│                             │             └──────────────────┘   │
-│                    ┌────────▼────────┐                            │
-│                    │  Task P5        │                            │
-│                    │  Ablation Study │                            │
-│                    └─────────────────┘                            │
-└──────────────────────────────────────────────────────────────────┘
-```
+<div align="center">
+<svg width="680" height="285" viewBox="0 0 680 285" xmlns="http://www.w3.org/2000/svg">
+  <rect width="680" height="285" rx="12" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="340" y="27" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="bold" fill="#1e293b">Surgical Post-op Diagnosis Prediction</text>
+  <rect x="20" y="40" width="130" height="55" rx="8" fill="#3b82f6"/>
+  <text x="85" y="64" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="bold" fill="white">Pre-op</text>
+  <text x="85" y="82" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#bfdbfe">Features</text>
+  <rect x="200" y="40" width="165" height="55" rx="8" fill="#4f46e5"/>
+  <text x="282" y="64" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="bold" fill="white">Bio-ClinicalBERT</text>
+  <text x="282" y="82" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#c7d2fe">768-d embeddings</text>
+  <rect x="415" y="40" width="145" height="55" rx="8" fill="#0ea5e9"/>
+  <text x="487" y="64" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="bold" fill="white">Task A</text>
+  <text x="487" y="82" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#bae6fd">ICD-10 Code</text>
+  <rect x="200" y="135" width="165" height="55" rx="8" fill="#4f46e5"/>
+  <text x="282" y="159" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="bold" fill="white">FAISS Index</text>
+  <text x="282" y="177" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#c7d2fe">k=5 RAG</text>
+  <rect x="415" y="135" width="145" height="55" rx="8" fill="#7c3aed"/>
+  <text x="487" y="159" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="bold" fill="white">Task B</text>
+  <text x="487" y="177" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#ede9fe">Operative Dx (Llama-3)</text>
+  <rect x="200" y="228" width="165" height="47" rx="8" fill="#0f766e"/>
+  <text x="282" y="252" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="bold" fill="white">Task P5</text>
+  <text x="282" y="268" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#99f6e4">Ablation Study</text>
+  <line x1="150" y1="67" x2="192" y2="67" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="192,63 200,67 192,71" fill="#64748b"/>
+  <line x1="365" y1="67" x2="407" y2="67" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="407,63 415,67 407,71" fill="#64748b"/>
+  <line x1="282" y1="95" x2="282" y2="127" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="278,127 282,135 286,127" fill="#64748b"/>
+  <line x1="365" y1="162" x2="407" y2="162" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="407,158 415,162 407,166" fill="#64748b"/>
+  <line x1="282" y1="190" x2="282" y2="220" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="278,220 282,228 286,220" fill="#64748b"/>
+</svg>
+</div>
 
 ---
 
