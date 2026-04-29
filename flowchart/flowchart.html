@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Flowchart</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        svg { max-width: 100%; height: auto; }
+
+        @page { size: A4 portrait; margin: 8mm; }
+
+        @media print {
+            body {
+                padding: 0;
+                min-height: 0;
+                background: transparent;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            svg { width: 100%; height: auto; }
+        }
+    </style>
+</head>
+<body>
+<!--
+  Layout constants — see flowchart/flowchart_rules.md for full reference
+  ─────────────────────────────────────────────────────────────────────────────
+  ViewBox          : 0 0 1000 1350
+  Phase band height: 225  (header @+42, box starts @+60, bottom pad 20px)
+  Inner box height : 145  (title @+52, sub1 @+90, sub2 @+120, 25px pad below)
+  Box horizontal   : x=50 / x=365 / x=680  width=270
+  Horizontal arrows: at box vertical centre (y_box + 72)
+  Inter-phase gap  : ~42px arrow between bands
+  Phase y-starts   : 140 / 415 / 690 / 965
+  Box y-starts     : 200 / 475 / 750 / 1025
+  Phase colours    : #3d47ba / #2d7a6b / #a65628 / #b8860b
+  ─────────────────────────────────────────────────────────────────────────────
+-->
+<svg viewBox="0 0 1000 1350" xmlns="http://www.w3.org/2000/svg"
+     style="font-family:'Segoe UI',Arial,sans-serif;">
+    <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10"
+                refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+            <path d="M 0 1 L 9 5 L 0 9 L 2.5 5 Z" fill="#999"/>
+        </marker>
+    </defs>
+
+    <!-- ── TOP PILL ───────────────────────────────────────────────────── -->
+    <rect x="175" y="20" width="650" height="90" rx="45" fill="#555"/>
+    <text x="500" y="58" font-size="28" font-weight="500"
+          text-anchor="middle" fill="white">Surgical Dataset · 183,913 cases</text>
+    <text x="500" y="92" font-size="24" font-weight="400"
+          text-anchor="middle" fill="#d0d0d0">34 columns · 13 surgical services</text>
+
+    <line x1="500" y1="110" x2="500" y2="132"
+          stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         PHASE 1 — Data Preparation   y=140  h=225  bottom=365
+    ══════════════════════════════════════════════════════════════════ -->
+    <rect x="25" y="140" width="950" height="225" rx="20"
+          fill="#3d47ba" stroke="#fff" stroke-width="3"/>
+    <text x="500" y="182" font-size="36" font-weight="600"
+          text-anchor="middle" fill="white">Phase 1 — Data Preparation</text>
+
+    <!-- P1 Box 1 -->
+    <rect x="50"  y="200" width="270" height="145" rx="18" fill="#3d47ba" stroke="#fff" stroke-width="2"/>
+    <text x="185" y="252" font-size="26" font-weight="600" text-anchor="middle" fill="white">Data Cleaning</text>
+    <text x="185" y="290" font-size="22" text-anchor="middle" fill="#f0f0f0">194,661 → 183,913</text>
+    <text x="185" y="320" font-size="20" text-anchor="middle" fill="#e0e0e0">dedup · missing filter</text>
+
+    <line x1="322" y1="272" x2="357" y2="272" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P1 Box 2 -->
+    <rect x="365" y="200" width="270" height="145" rx="18" fill="#3d47ba" stroke="#fff" stroke-width="2"/>
+    <text x="500" y="252" font-size="26" font-weight="600" text-anchor="middle" fill="white">Leakage Audit</text>
+    <text x="500" y="290" font-size="22" text-anchor="middle" fill="#f0f0f0">34 columns reviewed</text>
+    <text x="500" y="320" font-size="20" text-anchor="middle" fill="#e0e0e0">post-op features removed</text>
+
+    <line x1="637" y1="272" x2="672" y2="272" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P1 Box 3 -->
+    <rect x="680" y="200" width="270" height="145" rx="18" fill="#3d47ba" stroke="#fff" stroke-width="2"/>
+    <text x="815" y="252" font-size="26" font-weight="600" text-anchor="middle" fill="white">Target Definition</text>
+    <text x="815" y="290" font-size="22" text-anchor="middle" fill="#f0f0f0">Task A: ICD-10 code</text>
+    <text x="815" y="320" font-size="20" text-anchor="middle" fill="#e0e0e0">Task B: operative dx</text>
+
+    <line x1="500" y1="365" x2="500" y2="407"
+          stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         PHASE 2 — Encoding and Indexing   y=415  h=225  bottom=640
+    ══════════════════════════════════════════════════════════════════ -->
+    <rect x="25" y="415" width="950" height="225" rx="20"
+          fill="#2d7a6b" stroke="#fff" stroke-width="3"/>
+    <text x="500" y="457" font-size="36" font-weight="600"
+          text-anchor="middle" fill="white">Phase 2 — Encoding and Indexing</text>
+
+    <!-- P2 Box 1 -->
+    <rect x="50"  y="475" width="270" height="145" rx="18" fill="#2d7a6b" stroke="#fff" stroke-width="2"/>
+    <text x="185" y="527" font-size="26" font-weight="600" text-anchor="middle" fill="white">BioClinicalBERT</text>
+    <text x="185" y="565" font-size="22" text-anchor="middle" fill="#f0f0f0">CLS-token · 768-dim</text>
+    <text x="185" y="595" font-size="20" text-anchor="middle" fill="#e0e0e0">pre-op text fields</text>
+
+    <line x1="322" y1="547" x2="357" y2="547" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P2 Box 2 -->
+    <rect x="365" y="475" width="270" height="145" rx="18" fill="#2d7a6b" stroke="#fff" stroke-width="2"/>
+    <text x="500" y="527" font-size="26" font-weight="600" text-anchor="middle" fill="white">Tabular Processing</text>
+    <text x="500" y="565" font-size="22" text-anchor="middle" fill="#f0f0f0">median impute · OHE</text>
+    <text x="500" y="595" font-size="20" text-anchor="middle" fill="#e0e0e0">38-dim feature vector</text>
+
+    <line x1="637" y1="547" x2="672" y2="547" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P2 Box 3 -->
+    <rect x="680" y="475" width="270" height="145" rx="18" fill="#2d7a6b" stroke="#fff" stroke-width="2"/>
+    <text x="815" y="527" font-size="26" font-weight="600" text-anchor="middle" fill="white">FAISS Index</text>
+    <text x="815" y="565" font-size="22" text-anchor="middle" fill="#f0f0f0">fold-isolated · cosine</text>
+    <text x="815" y="595" font-size="20" text-anchor="middle" fill="#e0e0e0">top-K retrieval</text>
+
+    <line x1="500" y1="640" x2="500" y2="682"
+          stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         PHASE 3 — Feature Fusion and Cross-Validation   y=690  h=225  bottom=915
+    ══════════════════════════════════════════════════════════════════ -->
+    <rect x="25" y="690" width="950" height="225" rx="20"
+          fill="#a65628" stroke="#fff" stroke-width="3"/>
+    <text x="500" y="732" font-size="36" font-weight="600"
+          text-anchor="middle" fill="white">Phase 3 — Feature Fusion and Cross-Validation</text>
+
+    <!-- P3 Box 1 -->
+    <rect x="50"  y="750" width="270" height="145" rx="18" fill="#a65628" stroke="#fff" stroke-width="2"/>
+    <text x="185" y="802" font-size="26" font-weight="600" text-anchor="middle" fill="white">Feature Fusion</text>
+    <text x="185" y="840" font-size="22" text-anchor="middle" fill="#f0f0f0">BERT 768-d ⊕ Tab 38-d</text>
+    <text x="185" y="870" font-size="20" text-anchor="middle" fill="#e0e0e0">= 806-dim vector</text>
+
+    <line x1="322" y1="822" x2="357" y2="822" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P3 Box 2 -->
+    <rect x="365" y="750" width="270" height="145" rx="18" fill="#a65628" stroke="#fff" stroke-width="2"/>
+    <text x="500" y="802" font-size="26" font-weight="600" text-anchor="middle" fill="white">5-Fold Stratified CV</text>
+    <text x="500" y="840" font-size="22" text-anchor="middle" fill="#f0f0f0">stratified by service</text>
+    <text x="500" y="870" font-size="20" text-anchor="middle" fill="#e0e0e0">leakage-free splits</text>
+
+    <line x1="637" y1="822" x2="672" y2="822" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P3 Box 3 -->
+    <rect x="680" y="750" width="270" height="145" rx="18" fill="#a65628" stroke="#fff" stroke-width="2"/>
+    <text x="815" y="802" font-size="26" font-weight="600" text-anchor="middle" fill="white">Hyperparameter Opt.</text>
+    <text x="815" y="840" font-size="22" text-anchor="middle" fill="#f0f0f0">Optuna TPE · 20 trials</text>
+    <text x="815" y="870" font-size="20" text-anchor="middle" fill="#e0e0e0">per fold · per model</text>
+
+    <line x1="500" y1="915" x2="500" y2="957"
+          stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         PHASE 4 — Modelling and Evaluation   y=965  h=225  bottom=1190
+    ══════════════════════════════════════════════════════════════════ -->
+    <rect x="25" y="965" width="950" height="225" rx="20"
+          fill="#b8860b" stroke="#fff" stroke-width="3"/>
+    <text x="500" y="1007" font-size="36" font-weight="600"
+          text-anchor="middle" fill="white">Phase 4 — Modelling and Evaluation</text>
+
+    <!-- P4 Box 1 -->
+    <rect x="50"  y="1025" width="270" height="145" rx="18" fill="#b8860b" stroke="#fff" stroke-width="2"/>
+    <text x="185" y="1077" font-size="26" font-weight="600" text-anchor="middle" fill="white">Task A — ICD-10</text>
+    <text x="185" y="1115" font-size="22" text-anchor="middle" fill="#f0f0f0">Baseline · SGD · LightGBM</text>
+    <text x="185" y="1145" font-size="20" text-anchor="middle" fill="#e0e0e0">Top-K accuracy</text>
+
+    <line x1="322" y1="1097" x2="357" y2="1097" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P4 Box 2 -->
+    <rect x="365" y="1025" width="270" height="145" rx="18" fill="#b8860b" stroke="#fff" stroke-width="2"/>
+    <text x="500" y="1077" font-size="26" font-weight="600" text-anchor="middle" fill="white">Task B — RAG Pipeline</text>
+    <text x="500" y="1115" font-size="22" text-anchor="middle" fill="#f0f0f0">FAISS + Llama-3</text>
+    <text x="500" y="1145" font-size="20" text-anchor="middle" fill="#e0e0e0">operative dx generation</text>
+
+    <line x1="637" y1="1097" x2="672" y2="1097" stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- P4 Box 3 -->
+    <rect x="680" y="1025" width="270" height="145" rx="18" fill="#b8860b" stroke="#fff" stroke-width="2"/>
+    <text x="815" y="1077" font-size="26" font-weight="600" text-anchor="middle" fill="white">Evaluation</text>
+    <text x="815" y="1115" font-size="22" text-anchor="middle" fill="#f0f0f0">Top-K · BLEU · ROUGE-L</text>
+    <text x="815" y="1145" font-size="20" text-anchor="middle" fill="#e0e0e0">Cosine similarity</text>
+
+    <line x1="500" y1="1190" x2="500" y2="1232"
+          stroke="#999" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- ── BOTTOM PILL ─────────────────────────────────────────────── -->
+    <rect x="150" y="1240" width="700" height="90" rx="45" fill="#555"/>
+    <text x="500" y="1278" font-size="26" font-weight="500"
+          text-anchor="middle" fill="white">ICD-10 predictions · operative dx phrases</text>
+    <text x="500" y="1312" font-size="22" font-weight="400"
+          text-anchor="middle" fill="#d0d0d0">ablation · service-level analysis</text>
+</svg>
+</body>
+</html>

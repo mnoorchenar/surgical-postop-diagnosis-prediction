@@ -1,0 +1,17 @@
+﻿__pycache__/
+*.pyc
+.env
+.DS_Store
+*.log
+.vscode/
+*.tmp
+
+# Prompt and design rules — keep private, not for version control
+prompt.md
+flowchart/flowchart_rules.md
+
+# Data files -- keep local only, do not upload to GitHub
+*.csv
+*.db
+*.sqlite
+*.sqlite3

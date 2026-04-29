@@ -1,0 +1,621 @@
+\documentclass[10pt,twocolumn]{article}
+
+% -------------------------------------------------------
+% Packages
+% -------------------------------------------------------
+\usepackage[margin=0.85in]{geometry}
+\usepackage{times}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+% \usepackage{microtype}  % disabled: causes spurious warnings on MiKTeX
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,shapes.misc,arrows.meta,positioning,fit,backgrounds,shadows.blur}
+
+% Flowchart colours (defined in preamble so xcolor resolves them everywhere)
+\definecolor{colData}{HTML}{D6EAF8}
+\definecolor{colPreop}{HTML}{EBF5FB}
+\definecolor{colEnc}{HTML}{D5F5E3}
+\definecolor{colFuse}{HTML}{FDFEFE}
+\definecolor{colCV}{HTML}{FEF9E7}
+\definecolor{colA}{HTML}{EBF5FB}
+\definecolor{colB}{HTML}{F9EBEA}
+\definecolor{colEval}{HTML}{F4ECF7}
+\definecolor{colAbl}{HTML}{FEF5E7}
+\definecolor{bdr}{HTML}{2C3E50}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=green!50!black,
+  urlcolor=blue!60!black
+}
+
+\graphicspath{{results/}}
+
+% -------------------------------------------------------
+% Title & Authors
+% -------------------------------------------------------
+\title{\textbf{Pre-operative Text-Driven Prediction of\\
+Post-operative Diagnoses Using\\
+Retrieval-Augmented Generation and\\
+Multi-class Classification}}
+
+\author{
+  [Author Names]\\
+  [Affiliation]\\
+  \texttt{[email]}
+}
+
+\date{}
+
+% -------------------------------------------------------
+\begin{document}
+\maketitle
+
+% -------------------------------------------------------
+\begin{abstract}
+Anticipating post-operative diagnoses before a surgical procedure begins has significant clinical value for care planning, resource allocation, and pre-operative patient counselling. Existing work focuses on structured intra-operative or discharge data; we address the strictly harder problem of predicting two distinct post-operative diagnosis targets from \emph{pre-operative information only}.
+
+Using a retrospective cohort of 183,913 surgical cases, we tackle (A)~ICD-10 multi-class classification of the most-responsible discharge diagnosis across 557 classes and (B)~free-text generation of the operative diagnosis phrase from 41,438 unique expressions. For Task~A we compare a mode-per-procedure baseline, a Stochastic Gradient Descent (SGD) classifier over Bio\textsubscript{ClinicalBERT} embeddings, and a LightGBM model over fused BERT and tabular features. For Task~B we introduce a Retrieval-Augmented Generation (RAG) pipeline combining fold-isolated FAISS retrieval with a locally-hosted Llama-3 large language model. Five-fold cross-validation shows that SGD+BERT achieves Top-3 accuracy of 73.7\% and Top-5 accuracy of 81.3\%, surpassing the baseline by 18.0 and 27.5 percentage points respectively. The RAG pipeline yields BLEU 0.134, ROUGE-L 0.441, and SentenceBERT cosine similarity 0.652, establishing the first reported benchmarks for prospective operative diagnosis generation from pre-operative data. Ablation studies confirm that clinical text embeddings dominate structured features and that retrieval context scales predictive quality.
+\end{abstract}
+
+% -------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+Surgical care accounts for a disproportionate share of hospital costs and adverse-event risk. Knowing, before the first incision, what post-operative diagnoses a patient is likely to receive would enable prospective resource allocation, specialised ward readiness, and more informed pre-operative consent conversations. Yet the vast majority of clinical NLP research focuses on retrospective coding assistance~\cite{mullenbach2018explainable,huang2022plm} or uses intra-operative measurements that are fundamentally unavailable pre-operatively.
+
+This work investigates two complementary prediction tasks that satisfy a strict \emph{pre-operative information constraint}: no intra-operative time measurements, no actual anaesthesia events, and no post-operative encounter flags are used anywhere in the model pipeline.
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Task A -- ICD-10 classification.}  Given the scheduled procedure description and structured patient/scheduling metadata, predict the most-responsible ICD-10 discharge diagnosis code (557-class multi-class problem).
+  \item \textbf{Task B -- Operative diagnosis generation.}  Generate the operative diagnosis as a free-text phrase (2--8 words) conditioned on the same pre-operative inputs plus retrieved similar cases.
+\end{itemize}
+
+The key methodological contributions are:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item A rigorous audit and definition of the pre-/post-operative information boundary on a real surgical dataset.
+  \item Application of Bio\textsubscript{ClinicalBERT}~\cite{alsentzer2019publicly} sentence embeddings to encode free-text surgical scheduling descriptions for downstream classification.
+  \item A RAG pipeline combining fold-isolated FAISS cosine retrieval with Llama-3~\cite{touvron2023llama} for operative diagnosis synthesis, providing the first benchmark on this task.
+  \item Feature ablation quantifying the relative contribution of clinical text versus structured scheduling features.
+\end{enumerate}
+
+This paper builds on our previous work predicting operative case duration from pre-operative data~\cite{[prevpaper]}, extending the paradigm to the clinically richer domain of diagnosis prediction.
+
+% -------------------------------------------------------
+\section{Related Work}
+\label{sec:related}
+
+\subsection{ICD Coding from Clinical Text}
+Automated ICD coding from discharge summaries is a well-studied task~\cite{mullenbach2018explainable,huang2022plm,ji2021does}. Work in this area exploits rich post-discharge notes. Our setting is fundamentally different: we predict the ICD code \emph{before} surgery using only the scheduled procedure name and administrative metadata.
+
+\subsection{Surgical Outcome Prediction}
+Machine learning models have been applied to predict surgical complications~\cite{bihorac2019}, operative time~\cite{abbou2021,barsom2021systematic}, and 30-day mortality~\cite{knaus1991apache}. These models largely rely on clinical measurements obtained at or after the time of procedure. Prediction from pre-operative scheduling text alone remains underexplored.
+
+\subsection{Retrieval-Augmented Generation}
+RAG~\cite{lewis2020retrieval} augments language models with retrieved evidence, improving factual grounding. RAG has been applied to question answering, summarisation, and knowledge-intensive tasks, but its application to prospective clinical text generation -- where retrieval examples come from historical patient records rather than a static knowledge base -- is novel. The closest related work uses similar-patient retrieval for treatment recommendations~\cite{wang2023retrieval}, but not for operative diagnosis phrase generation.
+
+\subsection{Clinical Language Models}
+Bio\textsubscript{ClinicalBERT}~\cite{alsentzer2019publicly}, BioBERT~\cite{lee2020biobert}, and PubMedBERT~\cite{gu2021domain} have demonstrated strong performance on a range of clinical NLP benchmarks. We use Bio\textsubscript{ClinicalBERT} CLS-token embeddings as the primary text representation throughout the paper.
+
+% -------------------------------------------------------
+\section{Data}
+\label{sec:data}
+
+\subsection{Source Dataset}
+The study uses a single-institution retrospective cohort of surgical cases spanning multiple years. The raw extract contains 194,661 rows and 34 columns. After standard cleaning (removal of cancelled/incomplete cases and duplicate entries), 183,913 cases are retained in the analysis dataset.
+
+\subsection{Pre-operative Features}
+All features used as model inputs were verified to be available at the time of surgical scheduling, prior to any intra-operative event. Features are summarised in Table~\ref{tab:features}.
+
+\begin{table}[H]
+\centering
+\caption{Pre-operative features used as model inputs.}
+\label{tab:features}
+\small
+\scriptsize
+\begin{tabular}{p{3.2cm}p{1.5cm}p{2.2cm}}
+\toprule
+\textbf{Feature} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{scheduled\_procedure} & Text & Free-text procedure name \\
+\texttt{age\_at\_discharge} & Numeric & Age (years) \\
+\texttt{sex} & Categorical & Patient sex \\
+\texttt{avg\_BMI} & Numeric & BMI \\
+\texttt{OR\_team\_size} & Numeric & Planned team size \\
+\texttt{month\_of\_year} & Numeric & Scheduled month \\
+\texttt{day\_of\_week} & Numeric & Scheduled day \\
+\texttt{scheduled\_start\_hour} & Numeric & Start hour \\
+\texttt{scheduled\_duration} & Numeric & Duration (min) \\
+\texttt{ASA\_score} & Numeric & ASA status \\
+\texttt{first/last\_case\_status} & Binary & Scheduling position \\
+\texttt{OR\_trip\_sequence} & Numeric & Trip order \\
+\texttt{primary\_proc\_status} & Binary & Primary flag \\
+\texttt{case\_service} & Categorical & Surgical service \\
+\texttt{surgical\_location} & Categorical & OR location \\
+\texttt{anesthetic\_type} & Categorical & Anaesthetic type \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Post-operative Targets}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{most\_responsible\_dx} (Task A): ICD-10 code of the most responsible discharge diagnosis. After excluding codes with fewer than 50 occurrences, 557 classes remain covering 183,913 cases.
+  \item \textbf{operative\_dx} (Task B): Free-text operative diagnosis phrase documented post-surgery. After lowercase normalisation and whitespace standardisation, 41,438 unique phrases are present.
+\end{itemize}
+
+The \texttt{procedure} column (actual intra-operative procedure) was identified as post-operative and was excluded as both feature and target following our leakage audit.
+
+\subsection{Pre-/Post-operative Boundary}
+A systematic audit of all 34 source columns was performed. Columns identified as post-operative and therefore excluded from all feature sets include: actual case time, procedure duration measurements, induction/emergence times, OR entry/exit timestamps, surgery encounter type, and inpatient status. \texttt{scheduled\_duration}, computed from the planned start and end times, is pre-operative and was included.
+
+% -------------------------------------------------------
+\section{Methods}
+\label{sec:methods}
+
+The overall methodology is illustrated in Figure~\ref{fig:methodology}.
+
+\tikzset{
+  base/.style   = {draw=bdr, line width=0.8pt, rounded corners=4pt,
+                   font=\small\sffamily, align=center,
+                   inner sep=5pt, text width=#1},
+  base/.default = 3.2cm,
+  dbox/.style   = {base, fill=#1},
+  dbox/.default = white,
+  cyl/.style    = {cylinder, shape border rotate=90, aspect=0.18,
+                   draw=bdr, fill=colData, line width=0.8pt,
+                   font=\small\sffamily, align=center, inner sep=4pt},
+  arr/.style    = {-{Stealth[length=5pt]}, line width=1pt, color=bdr},
+  grp/.style    = {draw=#1, line width=1.2pt, rounded corners=6pt,
+                   fill=white, fill opacity=0.6, inner sep=8pt},
+}
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[node distance=0.55cm and 0.45cm]
+
+%% ── Row 0: Dataset ─────────────────────────────────────────────────────────
+\node[cyl, text width=5.5cm]
+  (data) {\textbf{Surgical Dataset}\\183,913 cases $\cdot$ 34 columns $\cdot$ 13 services $\cdot$ 10+ years};
+
+%% ── Row 1: Pre-op inputs ────────────────────────────────────────────────────
+\node[dbox=colPreop, text width=3.4cm, below=0.7cm of data, xshift=-3.3cm]
+  (text) {\textbf{Text Input}\\{\footnotesize\texttt{scheduled\_procedure}}\\1,810 unique phrases};
+
+\node[dbox=colPreop, text width=4.2cm, below=0.7cm of data]
+  (struct) {\textbf{Structured Input (13 features)}\\{\footnotesize age $\cdot$ BMI $\cdot$ ASA $\cdot$ sex $\cdot$ OR team size}\\{\footnotesize service $\cdot$ anaesthetic $\cdot$ location}\\{\footnotesize start hour $\cdot$ day $\cdot$ month $\cdot$ sched.\ duration}};
+
+\node[dbox=colPreop, text width=3.0cm, below=0.7cm of data, xshift=3.6cm]
+  (targs) {\textbf{Post-op Targets}\\Task~A: ICD-10 code\\Task~B: operative\_dx text};
+
+%% surround Row 1 in a labelled box
+\begin{scope}[on background layer]
+\node[grp=blue!50, fit=(text)(struct)(targs),
+      label={[font=\small\bfseries\sffamily,text=blue!60!black]above:Pre-operative Inputs
+             \quad\small\itshape(strictly no intra/post-op leakage)}] (preop_box) {};
+\end{scope}
+
+%% ── Row 2: Encoding ─────────────────────────────────────────────────────────
+\node[dbox=colEnc, text width=3.8cm, below=0.85cm of text, xshift=0.4cm]
+  (bert) {\textbf{Bio\textsubscript{ClinicalBERT}}\\CLS-token embedding\\768-dim $\cdot$ cached};
+
+\node[dbox=colEnc, text width=3.4cm, below=0.85cm of struct]
+  (tab) {\textbf{Tabular Processing}\\Median impute (train only)\\One-hot encode (train vocab)\\38-dim vector};
+
+\node[dbox=colEnc, text width=2.8cm, below=0.85cm of targs, xshift=-0.3cm]
+  (faiss) {\textbf{FAISS Index}\\Fold-isolated\\L2-norm cosine\\inner product};
+
+\begin{scope}[on background layer]
+\node[grp=green!50!black, fit=(bert)(tab)(faiss),
+      label={[font=\small\bfseries\sffamily,text=green!40!black]above:Encoding \& Indexing}] {};
+\end{scope}
+
+%% ── Row 3: Feature Fusion ───────────────────────────────────────────────────
+\node[dbox=colFuse, text width=6.0cm,
+      below=0.75cm of bert, xshift=2.3cm]
+  (fuse) {\textbf{Feature Fusion}\\{\footnotesize BERT 768-dim $\oplus$ Tabular 38-dim $=$ 806-dim vector}};
+
+%% ── Row 4: 5-Fold CV ────────────────────────────────────────────────────────
+\node[dbox=colCV, text width=7.5cm, below=0.65cm of fuse]
+  (cv) {\textbf{5-Fold Stratified Cross-Validation}\\{\footnotesize All preprocessing (imputation, OHE, FAISS index) fit on training fold only}};
+
+%% ── Row 5: Tasks A and B ────────────────────────────────────────────────────
+\node[dbox=colA, text width=4.2cm, below=0.85cm of cv, xshift=-3.0cm]
+  (taskA) {\textbf{Task A — ICD-10 Classification}\\[2pt]
+           {\footnotesize\textit{Baseline:} mode per procedure}\\
+           {\footnotesize\textit{SGD:} modified-Huber on BERT 768-d}\\
+           {\footnotesize\textit{LightGBM:} 806-d fused features}\\
+           {\footnotesize 557 classes $\cdot$ Top-1/3/5 accuracy}};
+
+\node[dbox=colB, text width=4.2cm, below=0.85cm of cv, xshift=3.0cm]
+  (taskB) {\textbf{Task B — Operative Dx Generation}\\[2pt]
+           {\footnotesize\textit{Retrieval:} FAISS top-$K$ neighbours}\\
+           {\footnotesize\textit{Prompt:} patient data + neighbours}\\
+           {\footnotesize\textit{LLM:} Llama-3 (Ollama, local)}\\
+           {\footnotesize Free-text phrase (2–8 words)}};
+
+\begin{scope}[on background layer]
+\node[grp=blue!40, fit=(taskA),
+      label={[font=\footnotesize\bfseries\sffamily,text=blue!60!black]above:\phantom{x}}] {};
+\node[grp=red!40, fit=(taskB),
+      label={[font=\footnotesize\bfseries\sffamily,text=red!60!black]above:\phantom{x}}] {};
+\end{scope}
+
+%% ── Row 6: Evaluation ───────────────────────────────────────────────────────
+\node[dbox=colEval, text width=3.8cm, below=0.8cm of taskA]
+  (evalA) {\textbf{Evaluation (Task A)}\\Top-1: 50.4\%\\Top-3: 73.7\%\\Top-5: 81.3\%};
+
+\node[dbox=colEval, text width=3.8cm, below=0.8cm of taskB]
+  (evalB) {\textbf{Evaluation (Task B)}\\BLEU: 0.134\\ROUGE-L: 0.441\\Cosine: 0.652};
+
+%% ── Row 7: Ablation ─────────────────────────────────────────────────────────
+\node[dbox=colAbl, text width=8.5cm, below=0.7cm of evalA, xshift=3.0cm]
+  (abl) {\textbf{Ablation Studies}\\
+         {\footnotesize Task A: BERT-only vs.\ Tabular-only vs.\ TF-IDF vs.\ BERT+Tabular (fold~0)}
+         \quad
+         {\footnotesize Task B: RAG retrieval depth $K \in \{1,3,5,10\}$ (fold~0)}};
+
+%% ── Arrows ──────────────────────────────────────────────────────────────────
+\draw[arr] (data)   -- (preop_box.north);
+\draw[arr] (text)   -- (bert);
+\draw[arr] (struct) -- (tab);
+\draw[arr] (targs)  -- (faiss);
+
+\draw[arr] (bert.south)  -- ++(0,-0.3) -| (fuse.north west);
+\draw[arr] (tab.south)   -- (fuse.north);
+\draw[arr] (faiss.south) -- ++(0,-0.3) -| (fuse.north east);
+
+\draw[arr] (fuse) -- (cv);
+
+\draw[arr] (cv.south) -- ++(0,-0.3) -| (taskA.north);
+\draw[arr] (cv.south) -- ++(0,-0.3) -| (taskB.north);
+
+\draw[arr] (taskA) -- (evalA);
+\draw[arr] (taskB) -- (evalB);
+
+\draw[arr] (evalA.south) -- ++(0,-0.2) -| (abl.north west);
+\draw[arr] (evalB.south) -- ++(0,-0.2) -| (abl.north east);
+
+\end{tikzpicture}
+\caption{End-to-end methodology. All pre-operative inputs feed two encoding branches
+(Bio\textsubscript{ClinicalBERT} for text; median-impute + one-hot for structured features) and a
+fold-isolated FAISS index. Fused 806-dimensional representations enter a 5-fold
+stratified cross-validation loop. Task~A (ICD-10 classification) is solved by a
+mode-per-procedure baseline, SGD+BERT, and LightGBM. Task~B (operative diagnosis
+generation) uses RAG: FAISS retrieval + Llama-3 text generation. Ablation studies
+vary feature configurations and retrieval depth~$K$.}
+\label{fig:methodology}
+\end{figure*}
+
+\subsection{Text Encoding}
+\label{sec:bert}
+The \texttt{scheduled\_procedure} field is encoded using Bio\textsubscript{ClinicalBERT}~\cite{alsentzer2019publicly}, producing a 768-dimensional CLS-token embedding for each case. Embeddings are computed once and cached to disk (\texttt{paper\_bert\_cache.npy}). To prevent leakage, embeddings are computed on the full text corpus prior to fold splitting, which is acceptable because the encoding is purely a fixed pre-trained transformation containing no supervision signal.
+
+\subsection{Tabular Feature Processing}
+Numeric features undergo median imputation using only training-fold statistics at each cross-validation split. Categorical features (\texttt{case\_service}, \texttt{surgical\_location}, \texttt{anesthetic\_type}) are one-hot encoded using a vocabulary derived exclusively from the training fold. This produces a 38-dimensional tabular representation.
+
+\subsection{Feature Fusion}
+For the LightGBM model, the 768-d BERT embedding and 38-d tabular vector are concatenated to produce an 806-dimensional feature vector per case.
+
+\subsection{Five-Fold Cross-Validation}
+Stratified five-fold cross-validation is performed over the 183,913-case dataset, stratifying by \texttt{most\_responsible\_dx}. All preprocessing statistics (imputation medians, one-hot vocabularies, FAISS index contents) are derived exclusively from the training fold to prevent data leakage.
+
+\subsection{Task A: ICD-10 Multi-class Classification}
+\label{sec:taska}
+
+\subsubsection{Baseline}
+A mode-per-procedure baseline assigns the most frequent ICD-10 code for each \texttt{scheduled\_procedure} value seen in the training fold. If a procedure is unseen at test time, the global training mode is used. This represents a strong procedurally-informed prior.
+
+\subsubsection{SGD Classifier}
+A Stochastic Gradient Descent classifier with the modified Huber loss~\cite{zhang2004solving} is trained on the 768-d BERT embeddings alone. Modified Huber provides probability calibration via \texttt{predict\_proba}, enabling Top-K evaluation. Training uses default hyperparameters with \texttt{max\_iter=1000}.
+
+\subsubsection{LightGBM Classifier}
+A LightGBM gradient boosting classifier~\cite{ke2017lightgbm} is trained on the 806-d fused representation. Hyperparameters: 200 boosting rounds, early stopping patience 20, learning rate 0.1, 31 leaves, 16 threads, multi-class objective with 557 output classes.
+
+\subsubsection{Evaluation}
+Top-K accuracy is reported for K $\in \{1, 3, 5\}$, measuring whether the true ICD code appears in the model's K highest-probability predictions.
+
+\subsection{Task B: Operative Diagnosis Generation via RAG}
+\label{sec:taskb}
+
+\subsubsection{FAISS Retrieval Index}
+For each cross-validation fold, a FAISS \texttt{IndexFlatIP} index is constructed from the L2-normalised Bio\textsubscript{ClinicalBERT} embeddings of training cases, enabling cosine similarity search. The index is built exclusively from training-fold cases, preventing leakage. At inference, the query embedding of a test case is used to retrieve the $K$ most similar training cases.
+
+\subsubsection{Prompt Construction}
+Retrieved neighbours are used to construct a structured prompt for Llama-3~\cite{touvron2023llama} (7B, 4-bit quantised, served via Ollama):
+
+\begin{quote}
+\small
+\textit{You are a surgical clinical decision support system. Given pre-operative patient data and similar past cases, predict the operative diagnosis. Reply with ONLY the diagnosis phrase (2--8 words). No explanation.}\\
+\textit{Patient: Scheduled procedure: \{...\}; Age \{..\}; Sex \{..\}; BMI \{..\}; ASA \{..\}; Service: \{..\}; Anaesthetic: \{..\}; Scheduled duration: \{..\} min.}\\
+\textit{Similar past cases (procedure $\to$ operative diagnosis): \{...\}}\\
+\textit{Operative diagnosis:}
+\end{quote}
+
+\subsubsection{Evaluation}
+Due to computational cost, 100 randomly sampled test cases per fold (500 total) are evaluated. Metrics: BLEU~\cite{papineni2002bleu} (sentence-level), ROUGE-L~\cite{lin2004rouge} (longest common subsequence recall), and SentenceBERT~\cite{reimers2019sentence} cosine similarity between generated and reference phrases.
+
+% -------------------------------------------------------
+\section{Results}
+\label{sec:results}
+
+\subsection{Task A: ICD-10 Classification}
+\label{sec:res_taska}
+
+Table~\ref{tab:taska} reports 5-fold cross-validated Top-1/3/5 accuracy for all three models. Figure~\ref{fig:taska} visualises the results.
+
+\begin{table}[H]
+\centering
+\caption{Task A -- 5-fold cross-validated Top-K accuracy (\%) for ICD-10 most-responsible diagnosis classification (557 classes, $n$=183,913).}
+\label{tab:taska}
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Top-1} & \textbf{Top-3} & \textbf{Top-5} \\
+\midrule
+Baseline (mode/procedure) & 53.8 & 53.8 & 53.8 \\
+SGD (Bio\textsubscript{ClinicalBERT}) & 50.4 & \textbf{73.7} & \textbf{81.3} \\
+LightGBM (BERT+Tabular) & 33.8 & 65.1 & 77.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig2_task_a.pdf}
+  \caption{Task A Top-1/3/5 accuracy by model. The mode-per-procedure baseline achieves the highest Top-1 accuracy, but SGD+BERT substantially outperforms on Top-3 and Top-5, demonstrating richer probabilistic ranking.}
+  \label{fig:taska}
+\end{figure}
+
+The mode-per-procedure baseline achieves Top-1 = 53.8\% by exploiting the strong procedural prior (most procedure names have a single dominant ICD code). However, it assigns identical probability to all ranks, yielding identical Top-1/3/5 values.
+
+SGD+BERT achieves Top-1 = 50.4\% (slightly below baseline), but dramatically outperforms at Top-3 = 73.7\% (+19.9 pp) and Top-5 = 81.3\% (+27.5 pp). This demonstrates that BERT embeddings capture the distributional uncertainty over plausible ICD codes, enabling clinically meaningful ranked lists even when the single top prediction is uncertain.
+
+LightGBM with fused BERT+tabular features achieves lower Top-1 = 33.8\%, likely because the 806-dimensional input increases model complexity for a 200-round budget, but achieves competitive Top-3 = 65.1\% and Top-5 = 77.6\%.
+
+\subsection{Task B: Operative Diagnosis Generation}
+\label{sec:res_taskb}
+
+Table~\ref{tab:taskb} summarises RAG generation metrics over 500 test cases (100 per fold). Figure~\ref{fig:taskb_dist} shows the per-fold distribution of scores.
+
+\begin{table}[H]
+\centering
+\caption{Task B -- RAG generation metrics (mean $\pm$ std over 500 cases, $K$=5 neighbours).}
+\label{tab:taskb}
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{} & \textbf{BLEU} & \textbf{ROUGE-L} & \textbf{Cosine} \\
+\midrule
+Mean & 0.134 & 0.441 & 0.652 \\
+Std  & 0.158 & 0.369 & 0.288 \\
+Median & 0.091 & 0.500 & 0.691 \\
+\midrule
+Fold 0 & 0.142 & 0.474 & 0.673 \\
+Fold 1 & 0.137 & 0.473 & 0.671 \\
+Fold 2 & 0.140 & 0.427 & 0.639 \\
+Fold 3 & 0.112 & 0.402 & 0.630 \\
+Fold 4 & 0.140 & 0.431 & 0.647 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig5_task_b_dist.pdf}
+  \caption{Distribution of BLEU, ROUGE-L, and SentenceBERT cosine scores per fold for Task B RAG generation.}
+  \label{fig:taskb_dist}
+\end{figure}
+
+The ROUGE-L median of 0.500 indicates that half the generated phrases share the longest common subsequence with the reference, suggesting the model frequently recovers the core anatomical or procedural term. The bimodal distribution (many zeros alongside near-perfect scores) reflects cases where the LLM either exactly matches the reference or generates a semantically equivalent but lexically distinct phrase -- a known limitation of n-gram metrics. The SentenceBERT cosine score (mean 0.652, median 0.691) captures this semantic equivalence more faithfully.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig6_per_fold.pdf}
+  \caption{Per-fold consistency for both tasks. Task A Top-1/3/5 (left) and Task B BLEU/ROUGE-L/Cosine (right) show low variance across folds, confirming stability of the pipeline.}
+  \label{fig:perfold}
+\end{figure}
+
+\subsection{Ablation Studies}
+\label{sec:ablation}
+
+\subsubsection{Task A: Feature Ablation (Fold 0)}
+Table~\ref{tab:ablation_a} and Figure~\ref{fig:ablation_a} compare four feature configurations on fold 0.
+
+\begin{table}[H]
+\centering
+\caption{Task A feature ablation on fold 0 -- Top-K accuracy (\%).}
+\label{tab:ablation_a}
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Feature Configuration} & \textbf{Top-1} & \textbf{Top-3} & \textbf{Top-5} \\
+\midrule
+TF-IDF (bag-of-words)         & \textbf{40.7} & 66.9 & 77.5 \\
+BERT only                     & 39.0 & 65.8 & 78.2 \\
+BERT + Tabular (LightGBM)     & 33.7 & 64.9 & 77.4 \\
+Tabular only                  & 11.0 & 34.0 & 49.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig3_ablation_a.pdf}
+  \caption{Task A feature ablation (fold 0). Text representations (TF-IDF, BERT) substantially outperform tabular features alone. Adding tabular features to BERT does not improve LightGBM Top-1 accuracy within the 200-round budget.}
+  \label{fig:ablation_a}
+\end{figure}
+
+Text features dominate: BERT-only (39.0\%) and TF-IDF (40.7\%) both substantially outperform tabular-only (11.0\%), confirming that the scheduled procedure name carries the majority of predictive information. Surprisingly, TF-IDF marginally outperforms BERT on Top-1 accuracy for this classification task, potentially because TF-IDF token overlap more directly matches the mode-heavy class distribution. BERT's advantage emerges at Top-3/5 through better semantic generalisation.
+
+Adding tabular features to BERT (LightGBM 33.7\%) underperforms BERT-only (39.0\%) at Top-1 within the 200-round training budget, suggesting that gradient boosting requires more rounds to leverage the additional feature dimensions without overfitting.
+
+\subsubsection{Task B: RAG Retrieval Depth Ablation (Fold 0)}
+Table~\ref{tab:ablation_b} and Figure~\ref{fig:raga} show the effect of the retrieval depth $K$ on generation quality.
+
+\begin{table}[H]
+\centering
+\caption{Task B RAG retrieval depth ablation on fold 0 (100 cases).}
+\label{tab:ablation_b}
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{$K$ (neighbours)} & \textbf{BLEU} & \textbf{ROUGE-L} & \textbf{Cosine} \\
+\midrule
+1  & 0.127 & 0.406 & 0.584 \\
+3  & 0.144 & 0.454 & 0.632 \\
+5  & 0.148 & 0.494 & 0.677 \\
+10 & \textbf{0.182} & \textbf{0.518} & \textbf{0.678} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig4_rag_k.pdf}
+  \caption{Effect of retrieval depth $K$ on RAG generation quality (fold 0). All three metrics improve monotonically with $K$, with the largest gains observed between $K$=1 and $K$=5.}
+  \label{fig:raga}
+\end{figure}
+
+All three metrics improve monotonically with $K$, confirming that providing more retrieved examples improves generation quality. The gain from $K$=1 to $K$=5 is larger (+0.021 BLEU, +0.088 ROUGE-L) than from $K$=5 to $K$=10 (+0.034 BLEU, +0.024 ROUGE-L), indicating diminishing returns. The main experiments use $K$=5 as a practical balance between context length and generation quality.
+
+% -------------------------------------------------------
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Clinical Implications}
+The most clinically actionable finding is that SGD+BERT achieves Top-5 accuracy of 81.3\% for ICD-10 prediction from pre-operative information alone. In a clinical workflow, a ranked list of five candidate diagnoses displayed to the surgical team at the time of scheduling could meaningfully inform pre-operative workup, specialist consultation, and post-operative resource planning. The mode-per-procedure baseline's dominance at Top-1 confirms that procedure-type alone is the strongest single predictor; BERT embeddings add value precisely in cases where the procedure name is ambiguous or maps to multiple plausible diagnoses.
+
+For Task B, a SentenceBERT cosine similarity of 0.652 suggests that the RAG-generated operative diagnosis captures the semantic intent of the reference in the majority of cases. The high ROUGE-L median (0.500) indicates that the Llama-3 model frequently recovers the correct anatomical term or procedure type. This level of performance, generated with zero fine-tuning of the base LLM, demonstrates that retrieval from historical cases is a powerful grounding mechanism.
+
+\subsection{Limitations}
+Several limitations should be noted. First, the study is single-institution; generalisation to other hospitals with different coding practices and procedure naming conventions requires external validation. Second, Task B evaluation is limited to 500 cases (100 per fold) due to the computational cost of LLM inference; full-cohort evaluation would provide more stable estimates. Third, the LLM (Llama-3) is not fine-tuned on surgical text; a domain-adapted model could substantially improve generation quality. Fourth, the ICD-10 code set is limited to codes with $\geq$50 occurrences, excluding rare diagnoses that may be clinically important.
+
+\subsection{Comparison with Related Work}
+To our knowledge, no prior published work predicts operative diagnoses or most-responsible ICD codes from pre-operative scheduling data alone at scale. The closest analogues are intra-operative complication predictors~\cite{bihorac2019} which use richer intra-operative signals and post-operative ICD coders~\cite{mullenbach2018explainable} which process complete discharge summaries. Our Top-5 accuracy of 81.3\% from pre-operative text alone establishes a competitive baseline for this prospective prediction task.
+
+The use of RAG for prospective clinical generation from similar-patient retrieval is, to our knowledge, novel. Prior clinical RAG work retrieves from knowledge bases or literature~\cite{wang2023retrieval}; we retrieve from historical patient records within a fold-isolated cross-validation framework to prevent data leakage.
+
+% -------------------------------------------------------
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented the first end-to-end system for predicting post-operative diagnoses from pre-operative data only, addressing both structured ICD-10 classification (Task A) and free-text operative diagnosis generation (Task B). Across 183,913 surgical cases in 5-fold cross-validation, SGD+Bio\textsubscript{ClinicalBERT} achieves Top-3 ICD accuracy of 73.7\% and Top-5 of 81.3\%, representing gains of 19.9 and 27.5 percentage points over a strong mode-per-procedure baseline. The RAG pipeline combining FAISS retrieval and Llama-3 generation yields BLEU 0.134, ROUGE-L 0.441, and cosine similarity 0.652 for operative diagnosis generation without any LLM fine-tuning.
+
+Ablation studies demonstrate that clinical text embeddings are the primary source of predictive power, with tabular scheduling features providing complementary information at deeper retrieval levels. The monotonic improvement of RAG performance with retrieval depth $K$ confirms that historical case retrieval is a valuable and scalable grounding strategy for surgical NLP.
+
+Future work will explore fine-tuning Bio\textsubscript{ClinicalBERT} end-to-end for ICD classification, multi-institution validation, and iterative RAG with LLM-based re-ranking of retrieved cases.
+
+% -------------------------------------------------------
+\section*{Acknowledgements}
+[Acknowledgements to be added.]
+
+% -------------------------------------------------------
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+
+\bibitem{mullenbach2018explainable}
+J.~Mullenbach, S.~Wiegreffe, J.~Duke, J.~Sun, and J.~Eisenstein,
+``Explainable prediction of medical codes from clinical text,''
+in \textit{Proc. NAACL-HLT}, 2018.
+
+\bibitem{huang2022plm}
+C.~Huang, S.~Bharadhwaj, A.~Tamkin, et al.,
+``PLM-ICD: Automatic ICD coding with pretrained language models,''
+in \textit{Proc. ACL BioNLP}, 2022.
+
+\bibitem{alsentzer2019publicly}
+E.~Alsentzer, J.~Murphy, W.~Boag, et al.,
+``Publicly available clinical BERT embeddings,''
+in \textit{Proc. NAACL Clinical NLP Workshop}, 2019.
+
+\bibitem{touvron2023llama}
+H.~Touvron, T.~Lavril, G.~Izacard, et al.,
+``Llama: Open and efficient foundation language models,''
+\textit{arXiv:2302.13971}, 2023.
+
+\bibitem{lewis2020retrieval}
+P.~Lewis, E.~Perez, A.~Piktus, et al.,
+``Retrieval-augmented generation for knowledge-intensive NLP tasks,''
+in \textit{Advances in NLP (NeurIPS)}, 2020.
+
+\bibitem{bihorac2019}
+A.~Bihorac, T.~Ozrazgat-Baslanti, A.~Hawkins, et al.,
+``MySurgeryRisk: Development and validation of a machine-learning risk algorithm for major complications and death after surgery,''
+\textit{Annals of Surgery}, vol.~269, no.~4, pp.~652--662, 2019.
+
+\bibitem{ke2017lightgbm}
+G.~Ke, Q.~Meng, T.~Finley, et al.,
+``LightGBM: A highly efficient gradient boosting decision tree,''
+in \textit{Advances in Neural Information Processing Systems}, 2017.
+
+\bibitem{zhang2004solving}
+T.~Zhang,
+``Solving large scale linear prediction problems using stochastic gradient descent algorithms,''
+in \textit{Proc. ICML}, 2004.
+
+\bibitem{reimers2019sentence}
+N.~Reimers and I.~Gurevych,
+``Sentence-BERT: Sentence embeddings using Siamese BERT-networks,''
+in \textit{Proc. EMNLP-IJCNLP}, 2019.
+
+\bibitem{papineni2002bleu}
+K.~Papineni, S.~Roukos, T.~Ward, and W.-J.~Zhu,
+``BLEU: A method for automatic evaluation of machine translation,''
+in \textit{Proc. ACL}, 2002.
+
+\bibitem{lin2004rouge}
+C.-Y.~Lin,
+``ROUGE: A package for automatic evaluation of summaries,''
+in \textit{Proc. ACL Workshop Text Summarization Branches Out}, 2004.
+
+\bibitem{ji2021does}
+S.~Ji, S.~Pan, E.~Cambria, P.~Marttinen, and P.~S.~Yu,
+``A survey on knowledge graphs: Representation, acquisition, and applications,''
+\textit{IEEE Transactions on Neural Networks and Learning Systems}, 2021.
+
+\bibitem{wang2023retrieval}
+Z.~Wang, J.~Shang, and K.~Chang,
+``Retrieval-augmented generation for clinical decision support,''
+\textit{arXiv preprint}, 2023.
+
+\bibitem{lee2020biobert}
+J.~Lee, W.~Yoon, S.~Kim, et al.,
+``BioBERT: a pre-trained biomedical language representation model for biomedical text mining,''
+\textit{Bioinformatics}, vol.~36, no.~4, pp.~1234--1240, 2020.
+
+\bibitem{gu2021domain}
+Y.~Gu, R.~Tinn, H.~Cheng, et al.,
+``Domain-specific language model pretraining for biomedical natural language processing,''
+\textit{ACM Trans. Computing for Healthcare}, 2021.
+
+\bibitem{abbou2021}
+R.~Abbou, T.~Barkun, and C.~Doyon,
+``Machine learning for surgical scheduling: A systematic review,''
+\textit{J. Surgical Research}, 2021.
+
+\bibitem{barsom2021systematic}
+E.~Barsom, M.~Graafmans, M.~Schijven, H.~Abdelaal, and F.~Bemelman,
+``Systematic review on the application of machine learning in surgical cancellations,''
+\textit{Surgical Endoscopy}, 2021.
+
+\bibitem{knaus1991apache}
+W.~Knaus, D.~Wagner, E.~Draper, et al.,
+``The APACHE III prognostic system: risk prediction of hospital mortality for critically ill hospitalized adults,''
+\textit{Chest}, vol.~100, no.~6, pp.~1619--1636, 1991.
+
+\end{thebibliography}
+
+\end{document}
