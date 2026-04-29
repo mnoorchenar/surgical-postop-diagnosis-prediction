@@ -17,3 +17,9 @@ flowchart/flowchart_rules.md
 *.sqlite3
 *.db-shm
 *.db-wal
+
+# Large processed/model files -- keep local only
+*.faiss
+*.pkl
+*.npy
+data/processed/
